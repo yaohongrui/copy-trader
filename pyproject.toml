@@ -1,0 +1,13 @@
+[project]
+name = "binance-copy-trader"
+version = "0.1.0"
+description = "Binance futures copy trading system"
+requires-python = ">=3.10"
+dependencies = [
+    "aiohttp>=3.9.0",
+    "pyyaml>=6.0",
+    "playwright>=1.45.0",
+]
+
+[project.scripts]
+copy-trader = "src.main:cli"

@@ -1,0 +1,58 @@
+polling:
+  interval_seconds: 2.5
+  jitter_ms: 500
+
+binance_web:
+  cookie: ""
+  csrf_token: "3f2872723887ff542f32754a4fd2b821"
+  fvideo_id: ""
+  bnc_uuid: ""
+  device_info: ""
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+
+# `hybrid` uses fast HTTP polling and refreshes its authentication from the
+# persistent browser profile after an HTTP auth failure and on a schedule.
+# The profile directory contains a login credential; never commit or share it.
+binance_source:
+  type: "hybrid" # "http", "browser", or "hybrid" (recommended)
+  browser:
+    profile_dir: "data/binance-browser-profile"
+    # The service runs without a graphical display. Use binance_browser_login.sh
+    # for interactive login through the VNC desktop.
+    headless: true
+    timeout_ms: 30000
+  session:
+    refresh_interval_hours: 36
+
+leaders:
+  - name: "ExampleTrader"
+    portfolio_id: "4746642567314945281"
+    coefficient: 1.0
+    total_margin: 50000
+    enabled: true
+
+execution:
+  exchange: "bitget"
+  api_key: "YOUR_BITGET_API_KEY"
+  api_secret: "YOUR_BITGET_API_SECRET"
+  api_passphrase: "YOUR_BITGET_API_PASSPHRASE"
+  sandbox: false
+
+risk:
+  blacklist: []
+  conflict_resolution: "skip"
+
+notifications:
+  telegram:
+    enabled: false
+    bot_token: ""
+    chat_id: ""
+
+logging:
+  level: "INFO"
+  file: "logs/app.log"
+  max_size_mb: 50
+  backup_count: 5
+
+health_database:
+  path: "data/health.db"

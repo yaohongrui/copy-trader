@@ -1,0 +1,37 @@
+# Python bytecode and tooling caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local Python environments and build artifacts
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info/
+
+# Local secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+config/config.yaml
+sandbox/config.yaml
+
+# Runtime data. Browser profiles contain authenticated session cookies.
+data/binance-browser-profile/
+data/health.db
+data/health.db-*
+logs/
+
+# Editor and operating system files
+.vscode/
+.idea/
+.claude/settings.local.json
+.DS_Store

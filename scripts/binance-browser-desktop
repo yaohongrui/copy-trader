@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+display_number="${DISPLAY_NUM:-99}"
+display=":${display_number}"
+export DISPLAY="$display"
+
+Xvfb "$display" -screen 0 1440x900x24 -ac +extension GLX +render -noreset &
+xvfb_pid=$!
+trap 'kill "$xvfb_pid" 2>/dev/null || true' EXIT
+
+sleep 1
+fluxbox >/var/log/binance-browser-fluxbox.log 2>&1 &
+exec x11vnc -display "$display" -localhost -rfbport 5900 -forever -shared -nopw -noxdamage

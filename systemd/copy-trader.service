@@ -1,0 +1,18 @@
+[Unit]
+Description=Binance Copy Trader (Bitget UTA)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/copy
+ExecStart=/usr/bin/python3 -m src.main run --config /root/copy/config/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
