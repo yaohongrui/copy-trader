@@ -99,7 +99,8 @@ class HealthReporter:
             balance = await self._account.get_total_margin()
             self._last_balance = balance
             positions = await self._account.get_positions()
-            lines.append(f"Bitget: balance={balance} USDT; positions={len(positions)}")
+            lines.append(f"Balance: {balance} USDT; positions={len(positions)}")
+            lines.append(f"positions: {len(positions)}")
             if include_positions:
                 if positions:
                     lines.extend(f"Account position: {self._format_position(position)}" for position in positions)
