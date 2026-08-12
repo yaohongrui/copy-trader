@@ -23,6 +23,22 @@ class BitgetQuantityTests(unittest.TestCase):
         with self.assertRaises(BitgetAPIError):
             BitgetClient.format_quantity(Decimal("0.99"), self.instrument)
 
+    def test_round_to_step_rounds_down_to_exchange_step(self):
+        self.assertEqual(
+            BitgetClient.round_to_step(Decimal("1.23455"), {
+                "quantityMultiplier": "0.01",
+            }),
+            Decimal("1.23"),
+        )
+
+    def test_round_to_step_returns_zero_below_step(self):
+        self.assertEqual(
+            BitgetClient.round_to_step(Decimal("0.005"), {
+                "quantityMultiplier": "0.01",
+            }),
+            Decimal("0"),
+        )
+
 
 class BitgetOrderPayloadTests(unittest.IsolatedAsyncioTestCase):
     async def test_one_way_market_order_omits_position_side(self):

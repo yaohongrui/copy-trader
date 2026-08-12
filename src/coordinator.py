@@ -6,7 +6,7 @@ from decimal import Decimal
 from time import time
 
 from src.config import Config, LeaderConfig
-from src.bitget_client import BitgetSymbolUnavailableError
+from src.bitget_client import BitgetClient, BitgetSymbolUnavailableError
 from src.detector import detect_changes
 from src.health import HealthReporter
 from src.health_db import HealthDatabase
@@ -57,6 +57,10 @@ class Coordinator:
         self._telegram_offset = 0
         self._unavailable_symbols: set[str] = set()
         self._unavailable_notified: set[str] = set()
+        # 失败/小单订单冷却：同一 (symbol, side, type, qty) 短时间内不重复执行
+        self._order_cooldown: dict[tuple, float] = {}
+        self._order_cooldown_seconds = 180
+        self._skip_notice: set = set()
 
     async def start(self):
         logger.info("Starting coordinator...")
@@ -164,6 +168,8 @@ class Coordinator:
             )
             logger.info("Reload: started Telegram command listener")
 
+        self._prune_poll_tasks()
+
         # 新增的 leader 启动轮询；被移除的 leader 由 poll loop 自行检测退出
         for leader_cfg in new_config.leaders:
             if leader_cfg.enabled and leader_cfg.name not in self._poll_tasks:
@@ -176,6 +182,15 @@ class Coordinator:
 
         self.resume()
         logger.info("Config reloaded successfully")
+
+    def _prune_poll_tasks(self):
+        """删除已结束的轮询任务，便于热重载后同名 leader 重新启动。"""
+        finished = [
+            name for name, task in self._poll_tasks.items()
+            if task.done() or task.cancelled()
+        ]
+        for name in finished:
+            self._poll_tasks.pop(name, None)
 
     def _is_leader_enabled(self, name: str) -> bool:
         return any(l.name == name and l.enabled for l in self._config.leaders)
@@ -201,6 +216,7 @@ class Coordinator:
                 # 热重载后 leader 被禁用时，本循环自行退出
                 if not self._is_leader_enabled(leader_name):
                     logger.info("Leader %s no longer enabled, stopping poll loop", leader_name)
+                    self._poll_tasks.pop(leader_name, None)
                     break
 
                 if self._paused:
@@ -523,6 +539,36 @@ class Coordinator:
                     )
                     quantity = actual_qty
 
+        # 按下单量取整到合约 step，并校验最小数量/最小名义金额（冷却重复信号）
+        if signal.signal_type != SignalType.CLOSE and quantity is not None:
+            try:
+                rounded, size_error = await self._validate_order_size(
+                    signal.symbol, quantity, mark_price
+                )
+            except BitgetSymbolUnavailableError as e:
+                await self._handle_unavailable_symbol(signal.symbol, str(e))
+                return
+            quantity = rounded
+            if size_error:
+                cooldown_key = (
+                    signal.symbol, signal.side, signal.signal_type.value, str(quantity)
+                )
+                self._order_cooldown[cooldown_key] = time()
+                if cooldown_key not in self._skip_notice:
+                    self._skip_notice.add(cooldown_key)
+                    logger.warning(
+                        "[QuantityCheck] Skipping %s %s: %s",
+                        signal.symbol, signal.signal_type.value, size_error,
+                    )
+                    await self._notifier.notify_skipped(
+                        leader=signal.leader_name,
+                        symbol=signal.symbol,
+                        signal_type=signal.signal_type.value,
+                        side=signal.side,
+                        reason=size_error,
+                    )
+                return
+
         if quantity is None or quantity <= 0:
             reason = "quantity too small or zero" if quantity == 0 else "calculated quantity is None"
             logger.info("Sizer returned skip for %s: %s", signal.symbol, reason)
@@ -535,8 +581,30 @@ class Coordinator:
             )
             return
 
+        # 失败/小单冷却：同一信号短时间内不重复尝试下单
+        cooldown_key = (
+            signal.symbol, signal.side, signal.signal_type.value, str(quantity)
+        )
+        if signal.signal_type != SignalType.CLOSE:
+            last_attempt = self._order_cooldown.get(cooldown_key)
+            if last_attempt is not None and time() - last_attempt < self._order_cooldown_seconds:
+                logger.info(
+                    "[Cooldown] Skipping %s %s %s qty=%s: still in cooldown",
+                    signal.signal_type.value, signal.symbol, signal.side, quantity,
+                )
+                return
+        else:
+            # CLOSE 是全平强需求，不参与冷却
+            cooldown_key = None
+
         # Execute
         result = await self._executor.execute(signal, quantity)
+
+        if cooldown_key is not None:
+            if result.success:
+                self._order_cooldown.pop(cooldown_key, None)
+            else:
+                self._order_cooldown[cooldown_key] = time()
 
         if result.success:
             # 使用按 Bitget 合约步进取整后的实际请求数量更新镜像状态。
@@ -654,6 +722,20 @@ class Coordinator:
             raise ValueError(f"Invalid mark price for {symbol}: {price}")
         return price
 
+    async def _validate_order_size(
+        self, symbol: str, quantity: Decimal, mark_price: Decimal
+    ) -> tuple[Decimal, str | None]:
+        """按合约 step 取整并校验最小数量/最小名义金额，返回 (rounded, error)。"""
+        instrument = await self._account.client.get_instrument(symbol)  # 已缓存
+        rounded = BitgetClient.round_to_step(quantity, instrument)
+        min_qty = Decimal(str(instrument.get("minOrderQty", "0")))
+        if rounded <= 0 or (min_qty > 0 and rounded < min_qty):
+            return rounded, f"quantity {rounded} below minimum {min_qty}"
+        min_notional = Decimal(str(instrument.get("minNotionalValue", "5") or "5"))
+        if rounded * mark_price < min_notional:
+            return rounded, f"order notional below minimum {min_notional} USDT"
+        return rounded, None
+
     async def _get_existing_position(self, symbol: str):
         """Return the normalized Bitget position for a symbol, if present."""
         try:
@@ -692,17 +774,6 @@ class Coordinator:
             return size > 0 if size != 0 else None
         except Exception:
             return None
-
-    def _position_entry_price(self, position: dict) -> Decimal:
-        """Read entry price from the normalized Bitget position."""
-        for key in ('entry_price',):
-            value = position.get(key)
-            if value not in (None, '', '0', 0):
-                try:
-                    return Decimal(str(value))
-                except Exception:
-                    pass
-        return Decimal(0)
 
     def _price_is_favorable(self, is_long: bool, market_price: Decimal, leader_entry: Decimal) -> bool:
         """Whether a new market entry is no worse than the leader's entry price."""

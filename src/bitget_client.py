@@ -178,9 +178,13 @@ class BitgetClient:
         }, private=True)
 
     @staticmethod
-    def format_quantity(qty: Decimal, instrument: dict[str, Any]) -> str:
+    def round_to_step(qty: Decimal, instrument: dict[str, Any]) -> Decimal:
         step = Decimal(str(instrument["quantityMultiplier"]))
-        rounded = (qty // step) * step
+        return (qty // step) * step
+
+    @staticmethod
+    def format_quantity(qty: Decimal, instrument: dict[str, Any]) -> str:
+        rounded = BitgetClient.round_to_step(qty, instrument)
         if rounded < Decimal(str(instrument["minOrderQty"])):
             raise BitgetAPIError(
                 f"Quantity {rounded} is below Bitget minimum {instrument['minOrderQty']}"

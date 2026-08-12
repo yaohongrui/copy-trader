@@ -36,7 +36,6 @@ execution:
   api_key: "YOUR_BITGET_API_KEY"
   api_secret: "YOUR_BITGET_API_SECRET"
   api_passphrase: "YOUR_BITGET_API_PASSPHRASE"
-  sandbox: false
 
 risk:
   blacklist: []

@@ -38,16 +38,6 @@ class Sizer:
         leader_margin = Decimal(str(leader_cfg.total_margin))
         coefficient = Decimal(str(leader_cfg.coefficient))
 
-        if signal.signal_type == SignalType.CLOSE:
-            if my_mirror is None:
-                logger.warning("No mirror position to close for %s", signal.symbol)
-                return None
-
-            # 平仓：返回我们实际持有的全部数量（不四舍五入）
-            qty = abs(my_mirror.our_quantity)
-            logger.info("[Sizer] CLOSE: returning full position %.6f", qty)
-            return qty  # 不调用 _round_qty，保证全部平仓
-
         if signal.signal_type == SignalType.DECREASE:
             leader_old_amt = signal.leader_old_quantity
             if leader_old_amt is None and my_mirror is not None:
@@ -70,7 +60,7 @@ class Sizer:
                     "[Sizer] DECREASE %.6f capped to current position %.6f",
                     qty, base_qty
                 )
-                qty = abs(my_mirror.our_quantity)
+                qty = base_qty
 
             logger.info(
                 "[Sizer] DECREASE ratio: leader_delta=%s / leader_old=%s = %.6f, our_qty=%s -> %.6f",

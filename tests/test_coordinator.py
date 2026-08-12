@@ -78,6 +78,22 @@ class CoordinatorFormattingTests(unittest.TestCase):
                              for pos in coordinator._state.mirror_positions.values()))
         self.assertIn(("HK", "MUUSDT", "BOTH"), coordinator._state.mirror_positions)
 
+    def test_prune_poll_tasks_removes_finished_tasks(self):
+        async def scenario():
+            coordinator = Coordinator.__new__(Coordinator)
+
+            async def noop():
+                return None
+
+            coordinator._poll_tasks = {
+                "finished": asyncio.get_running_loop().create_task(noop()),
+            }
+            await asyncio.sleep(0)
+            coordinator._prune_poll_tasks()
+            return dict(coordinator._poll_tasks)
+
+        self.assertEqual(asyncio.run(scenario()), {})
+
 
 if __name__ == "__main__":
     unittest.main()

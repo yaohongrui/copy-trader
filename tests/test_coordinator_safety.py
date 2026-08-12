@@ -1,10 +1,12 @@
 import unittest
 
 from decimal import Decimal
+from unittest.mock import AsyncMock
 
+from src.coordinator import Coordinator
 from src.detector import detect_changes
 from src.config import LeaderConfig, RiskConfig
-from src.models import LeaderPosition, LeaderState
+from src.models import LeaderPosition, LeaderState, SignalType, TradeSignal
 from src.sizer import Sizer
 
 
@@ -78,6 +80,66 @@ class LeaderStateTests(unittest.TestCase):
         )
 
         self.assertEqual(quantity, Decimal("20"))
+
+    def test_decrease_caps_to_base_qty_without_mirror(self):
+        sizer = Sizer(RiskConfig())
+        signal = TradeSignal(
+            signal_type=SignalType.DECREASE,
+            leader_name="HK",
+            symbol="BLESSUSDT",
+            side="sell",
+            position_side="BOTH",
+            quantity=Decimal("1.5"),
+            leverage=10,
+            leader_notional=Decimal("100"),
+            reason="test",
+            leader_old_quantity=Decimal("1"),
+        )
+
+        quantity = sizer.calculate(
+            signal=signal,
+            leader_cfg=LeaderConfig("HK", "portfolio"),
+            my_margin=Decimal("100"),
+            my_mirror=None,
+            mark_price=Decimal("1"),
+            current_quantity=Decimal("1"),
+        )
+
+        self.assertEqual(quantity, Decimal("1.0"))
+
+
+class OrderValidationTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.coordinator = Coordinator.__new__(Coordinator)
+        account = type("Account", (), {})()
+        account.client = type("Client", (), {})()
+        account.client.get_instrument = AsyncMock(return_value={
+            "quantityMultiplier": "0.01",
+            "minOrderQty": "0.01",
+            "minNotionalValue": "5",
+        })
+        self.coordinator._account = account
+
+    async def test_valid_quantity_rounds_down_to_step(self):
+        rounded, error = await self.coordinator._validate_order_size(
+            "BTCUSDT", Decimal("1.234"), Decimal("100"),
+        )
+        self.assertEqual(rounded, Decimal("1.23"))
+        self.assertIsNone(error)
+
+    async def test_quantity_below_step_is_rejected(self):
+        rounded, error = await self.coordinator._validate_order_size(
+            "BTCUSDT", Decimal("0.005"), Decimal("100"),
+        )
+        self.assertEqual(rounded, Decimal("0"))
+        self.assertIsNotNone(error)
+
+    async def test_small_notional_is_rejected(self):
+        rounded, error = await self.coordinator._validate_order_size(
+            "BTCUSDT", Decimal("0.5"), Decimal("1"),
+        )
+        self.assertEqual(rounded, Decimal("0.5"))
+        self.assertIn("notional", error)
 
 
 if __name__ == "__main__":
