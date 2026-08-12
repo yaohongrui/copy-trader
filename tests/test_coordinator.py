@@ -4,7 +4,9 @@ from decimal import Decimal
 from unittest.mock import AsyncMock
 
 from src.coordinator import Coordinator
+from src.health import HealthReporter
 from src.models import MirrorPosition, SignalType, TradeSignal
+from src.notifier import Notifier
 
 
 class CoordinatorFormattingTests(unittest.TestCase):
@@ -20,17 +22,55 @@ class CoordinatorFormattingTests(unittest.TestCase):
                 "unrealized_pnl": "2.43877952",
                 "roi_pct": "26.95",
             }),
-            "BTCUSDT qty=0.0069 entry=63303.15 mark=63656.6 "
-            "unrealized_pnl=2.44 ROI=26.95%",
+            "BTCUSDT | LONG | 0.0069 | 63303.15 | 63656.6 | 2.44 | 26.95%",
         )
 
     def test_account_position_keeps_unknown_entry_value(self):
         coordinator = Coordinator.__new__(Coordinator)
 
         self.assertIn(
-            "entry=? mark=? unrealized_pnl=0.00",
+            "? | ? | 0 | ? | ? | 0.00 | 0.00%",
             coordinator._format_account_position({"entry_price": "?"}),
         )
+
+    def test_trade_pnl_uses_entry_price_and_position_direction(self):
+        coordinator = Coordinator.__new__(Coordinator)
+        signal = TradeSignal(
+            signal_type=SignalType.CLOSE, leader_name="leader", symbol="BTCUSDT",
+            side="sell", position_side="BOTH", quantity=Decimal("1"), leverage=1,
+            leader_notional=Decimal("0"), reason="test",
+        )
+        label, pnl = asyncio.run(coordinator._get_trade_pnl(
+            signal, Decimal("110"), Decimal("2"),
+            {"entry_price": "100", "size": "3"},
+        ))
+
+        self.assertEqual(label, "Trade PnL (pre-fee)")
+        self.assertEqual(pnl, "+20.00 USDT")
+
+    def test_trade_notification_uses_action_emoji_and_hides_order_id(self):
+        notifier = Notifier.__new__(Notifier)
+        messages = []
+
+        async def send(message):
+            messages.append(message)
+
+        notifier.send = send
+        asyncio.run(notifier.notify_trade(
+            leader="alpha", symbol="BTCUSDT", side="sell", qty="0.01",
+            signal_type="decrease", avg_price="100000", pnl_label="Trade PnL (pre-fee)",
+            pnl="+12.34 USDT",
+        ))
+
+        self.assertEqual(len(messages), 1)
+        self.assertIn("➖ <b>DECREASE FILLED</b>", messages[0])
+        self.assertIn("Trade PnL (pre-fee)", messages[0])
+        self.assertNotIn("Order ID", messages[0])
+
+    def test_health_table_aligns_mixed_width_leader_names(self):
+        table = HealthReporter._format_table("HK: API OK\n赌怪: API OK")
+
+        self.assertEqual(table, "<pre>HK    API OK\n赌怪  API OK</pre>")
 
     def test_actual_position_quantity_comes_from_exchange(self):
         coordinator = Coordinator.__new__(Coordinator)

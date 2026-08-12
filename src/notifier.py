@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 
 import aiohttp
@@ -99,21 +100,27 @@ class Notifier:
         qty: str,
         signal_type: str,
         avg_price: str | None = None,
-        order_id: str | None = None,
+        pnl_label: str | None = None,
+        pnl: str | None = None,
     ):
-        msg = (
-            f"✅ <b>[Trade Executed]</b>\n"
-            f"Leader: {leader}\n"
-            f"Symbol: {symbol}\n"
-            f"Type: {signal_type.upper()}\n"
-            f"Side: {side}\n"
-            f"Quantity: {qty}"
-        )
+        action = {
+            "open": ("🟢", "OPEN"),
+            "close": ("🔴", "CLOSE"),
+            "increase": ("➕", "INCREASE"),
+            "decrease": ("➖", "DECREASE"),
+            "reconcile": ("🔄", "RECONCILE"),
+        }.get(signal_type.lower(), ("✅", signal_type.upper()))
+        rows = [
+            ("Leader", leader),
+            ("Symbol", symbol),
+            ("Side", side.upper()),
+            ("Filled Qty", qty),
+        ]
         if avg_price and avg_price != "0":
-            msg += f"\nPrice: {avg_price}"
-        if order_id:
-            msg += f"\nOrder ID: {order_id}"
-        await self.send(msg)
+            rows.append(("Avg Price", avg_price))
+        if pnl_label and pnl is not None:
+            rows.append((pnl_label, pnl))
+        await self.send(f"{action[0]} <b>{action[1]} FILLED</b>\n{self._format_table(rows)}")
 
     async def notify_health_check(self, message: str):
         await self.send(f"🩺 <b>[Hourly Health Check]</b>\n{message}")
@@ -144,3 +151,13 @@ class Notifier:
             f"Type: {signal_type.upper()} {side}\n"
             f"Reason: {reason}"
         )
+
+    @staticmethod
+    def _format_table(rows: list[tuple[str, object]]) -> str:
+        """Render a compact, HTML-safe table in Telegram's monospaced block."""
+        label_width = max(len(str(label)) for label, _ in rows)
+        body = "\n".join(
+            f"{str(label).ljust(label_width)}  {html.escape(str(value))}"
+            for label, value in rows
+        )
+        return f"<pre>{body}</pre>"

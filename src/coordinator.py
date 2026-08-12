@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import random
 from datetime import datetime, timedelta
@@ -357,11 +358,17 @@ class Coordinator:
             await self._notifier.send(f"<b>[Current Positions]</b>\nFailed: {e}")
             return
 
-        lines = ["<b>[Current Positions]</b>"]
+        lines = ["📌 <b>OPEN POSITIONS</b>"]
         if positions:
-            lines.extend(self._format_account_position(position) for position in positions)
+            rows = [("Symbol", "Side", "Qty", "Entry", "Mark", "Unrealized PnL", "ROI")]
+            rows.extend(self._format_account_position(position).split(" | ") for position in positions)
+            widths = [max(len(row[index]) for row in rows) for index in range(len(rows[0]))]
+            lines.append("<pre>" + "\n".join(
+                "  ".join(html.escape(value).ljust(widths[index]) for index, value in enumerate(row))
+                for row in rows
+            ) + "</pre>")
         else:
-            lines.append("No open positions")
+            lines.append("<pre>No open positions</pre>")
         await self._notifier.send("\n".join(lines))
 
     async def _run_health_check(self):
@@ -369,7 +376,14 @@ class Coordinator:
 
     def _format_account_position(self, position: dict) -> str:
         symbol = position.get('contract', '?')
-        quantity = position.get('size', 0)
+        raw_quantity = position.get('size', 0)
+        try:
+            quantity_decimal = Decimal(str(raw_quantity))
+            direction = "LONG" if quantity_decimal > 0 else "SHORT" if quantity_decimal < 0 else "?"
+            quantity = str(abs(quantity_decimal))
+        except (ArithmeticError, ValueError):
+            direction = "?"
+            quantity = str(raw_quantity)
         entry = self._format_position_decimal(position.get('entry_price', '?'))
         mark = position.get('mark_price', '?')
         pnl = self._format_position_decimal(position.get('unrealized_pnl', '0'))
@@ -377,8 +391,7 @@ class Coordinator:
             roi = f"{Decimal(str(position.get('roi_pct', '0'))):.2f}"
         except (ArithmeticError, ValueError):
             roi = "0.00"
-        return f"{symbol} qty={quantity} entry={entry} mark={mark} " \
-               f"unrealized_pnl={pnl} ROI={roi}%"
+        return f"{symbol} | {direction} | {quantity} | {entry} | {mark} | {pnl} | {roi}%"
 
     @staticmethod
     def _format_position_decimal(value) -> str:
@@ -458,9 +471,11 @@ class Coordinator:
         # mirror is only bookkeeping and can be stale after a restart, a
         # manual trade, or a partial fill from an earlier order.
         actual_qty: Decimal | None = None
+        position_before: dict | None = None
         if signal.signal_type in (SignalType.CLOSE, SignalType.DECREASE, SignalType.INCREASE):
             try:
-                actual_qty = await self._get_actual_position_quantity(signal.symbol)
+                position_before = await self._get_account_position(signal.symbol)
+                actual_qty = self._position_quantity(position_before)
             except Exception as e:
                 logger.error(
                     "Failed to read actual position for %s before %s: %s",
@@ -616,6 +631,9 @@ class Coordinator:
                 signal.signal_type.value, signal.side, signal.symbol,
                 quantity, filled_qty, result.avg_price, result.order_id,
             )
+            pnl_label, pnl = await self._get_trade_pnl(
+                signal, result.avg_price, filled_qty, position_before
+            )
             await self._notifier.notify_trade(
                 leader=signal.leader_name,
                 symbol=signal.symbol,
@@ -623,7 +641,8 @@ class Coordinator:
                 qty=str(filled_qty),
                 signal_type=signal.signal_type.value,
                 avg_price=str(result.avg_price),
-                order_id=result.order_id,
+                pnl_label=pnl_label,
+                pnl=pnl,
             )
         else:
             logger.error(
@@ -757,12 +776,44 @@ class Coordinator:
 
     async def _get_actual_position_quantity(self, symbol: str) -> Decimal:
         """Return the live absolute position quantity from Bitget."""
-        positions = await self._account.get_positions()
-        for position in positions:
-            if position.get("contract") != symbol:
-                continue
-            return abs(Decimal(str(position.get("size", 0))))
-        return Decimal(0)
+        return self._position_quantity(await self._get_account_position(symbol))
+
+    async def _get_account_position(self, symbol: str) -> dict | None:
+        for position in await self._account.get_positions():
+            if position.get("contract") == symbol:
+                return position
+        return None
+
+    @staticmethod
+    def _position_quantity(position: dict | None) -> Decimal:
+        if position is None:
+            return Decimal(0)
+        return abs(Decimal(str(position.get("size", 0))))
+
+    async def _get_trade_pnl(
+        self, signal: TradeSignal, avg_price: Decimal, filled_qty: Decimal,
+        position_before: dict | None,
+    ) -> tuple[str, str]:
+        """Return realized PnL for reductions, otherwise current position PnL."""
+        if signal.signal_type in (SignalType.CLOSE, SignalType.DECREASE) and position_before:
+            try:
+                entry = Decimal(str(position_before.get("entry_price", 0)))
+                prior_size = Decimal(str(position_before.get("size", 0)))
+                gross_pnl = (avg_price - entry) * filled_qty
+                if prior_size < 0:
+                    gross_pnl = -gross_pnl
+                return "Trade PnL (pre-fee)", f"{gross_pnl:+.2f} USDT"
+            except (ArithmeticError, ValueError):
+                pass
+
+        try:
+            position = await self._get_account_position(signal.symbol)
+            if position:
+                pnl = Decimal(str(position.get("unrealized_pnl", 0)))
+                return "Unrealized PnL", f"{pnl:+.2f} USDT"
+        except Exception as e:
+            logger.warning("Unable to get PnL after trade for %s: %s", signal.symbol, e)
+        return "Unrealized PnL", "--"
 
     async def _has_existing_position(self, symbol: str):
         return await self._get_existing_position(symbol)
@@ -913,7 +964,8 @@ class Coordinator:
                     qty=str(filled_qty),
                     signal_type="reconcile",
                     avg_price=str(result.avg_price),
-                    order_id=result.order_id,
+                    pnl_label="Unrealized PnL",
+                    pnl=(await self._get_trade_pnl(signal, result.avg_price, filled_qty, None))[1],
                 )
             else:
                 logger.error("[Reconcile]补齐失败: %s: %s", leader_pos.symbol, result.error)

@@ -1,4 +1,6 @@
 import logging
+import html
+import unicodedata
 from datetime import datetime
 
 from src.config import Config
@@ -31,11 +33,34 @@ class HealthReporter:
                 self._database.record_balance(checked_at, balance)
             except Exception:
                 logger.exception("[Health] Failed to persist account balance")
-        await self._notifier.notify_health_check(report)
+        await self._notifier.notify_health_check(self._format_table(report))
 
     async def build_status_report(self, paused: bool) -> str:
         report = await self._build_report(include_positions=False, notify_auth_failures=False)
-        return f"<b>[System Status]</b>\nSystem: {'PAUSED' if paused else 'RUNNING'}\n{report}"
+        return f"📊 <b>SYSTEM STATUS</b>\n{self._format_table('Status: ' + ('PAUSED' if paused else 'RUNNING') + '\n' + report)}"
+
+    @staticmethod
+    def _format_table(report: str) -> str:
+        rows = []
+        for line in report.splitlines():
+            label, separator, value = line.partition(":")
+            rows.append((label, value.strip() if separator else ""))
+        width = max(HealthReporter._display_width(label) for label, _ in rows)
+        body = "\n".join(
+            f"{html.escape(HealthReporter._pad_to_width(label, width))}  {html.escape(value)}"
+            for label, value in rows
+        )
+        return f"<pre>{body}</pre>"
+
+    @staticmethod
+    def _display_width(value: str) -> int:
+        """Approximate Telegram monospace display width for mixed CJK text."""
+        return sum(2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+                   for char in value)
+
+    @classmethod
+    def _pad_to_width(cls, value: str, width: int) -> str:
+        return value + " " * max(0, width - cls._display_width(value))
 
     async def _build_report(self, include_positions: bool, notify_auth_failures: bool) -> str:
         self._last_balance = None
@@ -53,7 +78,7 @@ class HealthReporter:
                     f"{leader_cfg.name}: {self._cookie_status(positions)}; "
                     f"leader positions: {len(positions)}"
                 )
-                if state:
+                if state and state.consecutive_errors > 0:
                     lines.append(f"Poll [{leader_cfg.name}]: errors={state.consecutive_errors}")
             except PollAuthError as e:
                 lines.append(f"{leader_cfg.name}: FAILED (auth)")

@@ -1,6 +1,7 @@
 # 币安合约跟单系统
 
-实时监控多个币安带单员的仓位变动，按比例在自己的账户自动跟单。
+实时监控多个币安带单员的仓位变动，按比例在自己的bitget账户自动跟单。
+最大程度减小热门带单员的成交滑点（如：熬鹰）
 
 ---
 
@@ -99,8 +100,13 @@ risk:
 完整配置说明见 [USER_GUIDE.md](USER_GUIDE.md)。配置模板见 [config/config.example.yaml](config/config.example.yaml)。
 
 ### 浏览器认证数据源
-
+使用vnc viewer 进行登录浏览器时，需要连接ssh加密
+server：127.0.0.1:15900（或者5900端口）
+根据提示完成登录即可
 完成 VNC 中的人工 Binance 登录后，推荐启用混合来源：
+```powershell
+ssh -vvv -o ExitOnForwardFailure=yes -L 127.0.0.1:15900:127.0.0.1:5900 root@sy.yhr.qzz.io
+```
 
 ```yaml
 binance_source:
