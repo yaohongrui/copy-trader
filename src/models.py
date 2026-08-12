@@ -64,6 +64,7 @@ class LeaderState:
     positions: dict[tuple[str, str], LeaderPosition] = field(default_factory=dict)
     last_poll_time: float = 0.0
     consecutive_errors: int = 0
+    empty_snapshot_streak: int = 0
     initialized: bool = False  # 本次进程是否已经完成首轮仓位同步
 
 

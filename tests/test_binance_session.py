@@ -83,6 +83,22 @@ class HybridPositionSourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, ["position"])
         self.assertEqual(source._keeper.refreshes, ["leader-1"])
 
+    async def test_refreshes_browser_then_retries_empty_snapshot(self):
+        source = self._source([[], ["position"]])
+
+        result = await source.fetch_positions("leader-1")
+
+        self.assertEqual(result, ["position"])
+        self.assertEqual(source._keeper.refreshes, ["leader-1"])
+
+    async def test_empty_snapshot_refresh_is_attempted_once_until_positions_return(self):
+        source = self._source([[], [], []])
+
+        self.assertEqual(await source.fetch_positions("leader-1"), [])
+        self.assertEqual(await source.fetch_positions("leader-1"), [])
+
+        self.assertEqual(source._keeper.refreshes, ["leader-1"])
+
 
 if __name__ == "__main__":
     unittest.main()

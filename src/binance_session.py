@@ -106,6 +106,7 @@ class HybridBinancePositionSource:
         self._keeper = BinanceSessionKeeper(
             poller, browser_config, session_config, fallback_portfolio_id
         )
+        self._empty_refresh_attempted: set[str] = set()
 
     async def start(self) -> None:
         await self._poller.start()
@@ -132,7 +133,25 @@ class HybridBinancePositionSource:
 
     async def fetch_positions(self, portfolio_id: str):
         try:
-            return await self._poller.fetch_positions(portfolio_id)
+            positions = await self._poller.fetch_positions(portfolio_id)
+            if positions:
+                self._empty_refresh_attempted.discard(portfolio_id)
+                return positions
+
+            # Binance may return code=000000 with data=[] when copied web
+            # headers have gone stale. Refresh once for this empty episode,
+            # then let the coordinator's consecutive-empty guard decide.
+            if portfolio_id not in self._empty_refresh_attempted:
+                self._empty_refresh_attempted.add(portfolio_id)
+                logger.warning(
+                    "Binance returned an empty position list for %s; refreshing browser authentication",
+                    portfolio_id,
+                )
+                await self._keeper.refresh(portfolio_id)
+                positions = await self._poller.fetch_positions(portfolio_id)
+                if positions:
+                    self._empty_refresh_attempted.discard(portfolio_id)
+            return positions
         except PollAuthError as http_error:
             logger.warning("HTTP Binance authentication failed; attempting browser recovery")
             try:
@@ -142,3 +161,7 @@ class HybridBinancePositionSource:
                 raise PollAuthError(
                     f"HTTP authentication failed and browser recovery failed: {browser_error}"
                 ) from http_error
+        except BinanceAuthError as browser_error:
+            raise PollAuthError(
+                f"Browser authentication unavailable after empty position response: {browser_error}"
+            ) from browser_error

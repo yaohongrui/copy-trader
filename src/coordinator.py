@@ -229,6 +229,23 @@ class Coordinator:
                 leader_state.consecutive_errors = 0
                 leader_state.last_poll_time = time()
 
+                # A transient/stale Binance response can be a successful
+                # request with an empty data list. Never turn the first such
+                # snapshot into account-level close orders.
+                if positions:
+                    leader_state.empty_snapshot_streak = 0
+                elif leader_state.positions:
+                    leader_state.empty_snapshot_streak += 1
+                    if leader_state.empty_snapshot_streak < 2:
+                        logger.warning(
+                            "Empty position snapshot for %s (%d consecutive); retaining previous positions",
+                            leader_name, leader_state.empty_snapshot_streak,
+                        )
+                        self._state.maybe_save()
+                        jitter = random.uniform(0, jitter_ms / 1000)
+                        await asyncio.sleep(interval + jitter)
+                        continue
+
                 # 首次成功拉取时先做一次重连校验。首轮数据不能直接当成全部 OPEN
                 # 信号，否则只要已有部分仓位，旧的去重逻辑就会跳过整个补仓动作。
                 if not leader_state.initialized:
