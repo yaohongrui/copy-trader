@@ -111,7 +111,7 @@ server：127.0.0.1:15900（或者5900端口）
 根据提示完成登录即可
 完成 VNC 中的人工 Binance 登录后，推荐启用混合来源：
 ```powershell
-ssh -vvv -o ExitOnForwardFailure=yes -L 127.0.0.1:15900:127.0.0.1:5900 root@sy.yhr.qzz.io
+ssh -vvv -o ExitOnForwardFailure=yes -L 127.0.0.1:15900:127.0.0.1:5900 root@your_server_ip
 ```
 
 ```yaml
