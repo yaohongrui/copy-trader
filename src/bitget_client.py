@@ -177,6 +177,37 @@ class BitgetClient:
             "clientOid": client_oid,
         }, private=True)
 
+    async def place_limit_order(
+        self, *, symbol: str, qty: Decimal, side: str, price: Decimal,
+        reduce_only: bool, client_oid: str,
+    ) -> dict[str, Any]:
+        instrument = await self.get_instrument(symbol)
+        price_place = instrument.get("pricePlace")
+        if price_place is not None:
+            quantum = Decimal(1).scaleb(-int(price_place))
+            price = (price // quantum) * quantum
+        price_str = format(price, "f")
+        return await self._request("POST", "/api/v3/trade/place-order", body={
+            "category": self.CATEGORY,
+            "symbol": symbol,
+            "qty": self.format_quantity(qty, instrument),
+            "price": price_str,
+            "side": side,
+            "orderType": "limit",
+            "force": "gtc",
+            "reduceOnly": "yes" if reduce_only else "no",
+            "marginMode": "crossed",
+            "clientOid": client_oid,
+        }, private=True)
+
+    async def cancel_order(self, *, symbol: str, order_id: str) -> dict[str, Any]:
+        """Cancel an outstanding UTA order by its exchange order ID."""
+        return await self._request("POST", "/api/v3/trade/cancel-order", body={
+            "category": self.CATEGORY,
+            "symbol": symbol,
+            "orderId": order_id,
+        }, private=True)
+
     @staticmethod
     def round_to_step(qty: Decimal, instrument: dict[str, Any]) -> Decimal:
         step = Decimal(str(instrument["quantityMultiplier"]))

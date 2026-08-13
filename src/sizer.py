@@ -79,6 +79,18 @@ class Sizer:
 
             return self._round_qty(qty, precision)
 
+        # A configured fixed balance makes sizing deterministic and avoids
+        # depending on the live exchange equity for OPEN/INCREASE orders.
+        if self._risk.fixed_balance_usdt is not None:
+            fixed_balance = Decimal(str(self._risk.fixed_balance_usdt))
+            if fixed_balance <= 0:
+                raise ValueError("risk.fixed_balance_usdt must be positive")
+            logger.info(
+                "[Sizer] Using fixed sizing balance: %s (live margin=%s)",
+                fixed_balance, my_margin,
+            )
+            my_margin = fixed_balance
+
         # OPEN or INCREASE: apply the formula
         # 新公式：(my_notional / my_margin) = coefficient × (leader_notional / leader_margin)
         # 推导：my_notional = coefficient × (leader_notional / leader_margin) × my_margin

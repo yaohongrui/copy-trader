@@ -42,6 +42,7 @@ class TradeSignal:
     leverage: int
     leader_notional: Decimal
     reason: str
+    leader_entry_price: Decimal | None = None
     # Snapshot quantities let sizing recover when the local mirror is absent.
     leader_old_quantity: Decimal | None = None
     leader_new_quantity: Decimal | None = None
@@ -75,3 +76,4 @@ class OrderResult:
     filled_qty: Decimal = Decimal(0)
     avg_price: Decimal = Decimal(0)
     error: str | None = None
+    pending: bool = False

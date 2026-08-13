@@ -120,7 +120,7 @@ class Notifier:
             rows.append(("Avg Price", avg_price))
         if pnl_label and pnl is not None:
             rows.append((pnl_label, pnl))
-        await self.send(f"{action[0]} <b>{action[1]} FILLED</b>\n{self._format_table(rows)}")
+        await self.send(f"{action[0]} <b>{action[1]} Executed</b>\n{self._format_table(rows)}")
 
     async def notify_health_check(self, message: str):
         await self.send(f"🩺 <b>[Hourly Health Check]</b>\n{message}")

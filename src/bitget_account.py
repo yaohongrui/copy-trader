@@ -72,14 +72,10 @@ class BitgetAccount:
                 leverage = self._decimal(self._first(item, "leverage"))
                 if entry > 0 and leverage > 0:
                     margin = abs(quantity) * entry / leverage
-            profit_rate = self._decimal(self._first_nonzero(item, "profitRate"))
-            # Bitget documents profitRate as the position's profit rate.  Use
-            # it directly so ROI follows the exchange calculation (including
-            # its treatment of fees/funding); retain a fallback for older
-            # responses that do not include it.
-            roi = profit_rate * 100 if profit_rate != 0 else (
-                unrealized / margin * 100 if margin > 0 else Decimal(0)
-            )
+            # Display ROI on a fixed 100x basis, independent of the account's
+            # actual leverage, allocated margin, and exchange profitRate.
+            fixed_margin = abs(quantity) * entry / Decimal(100)
+            roi = unrealized / fixed_margin * 100 if fixed_margin > 0 else Decimal(0)
             normalized.append({
                 "contract": item.get("symbol", ""),
                 "size": str(signed),

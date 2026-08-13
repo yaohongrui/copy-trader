@@ -30,6 +30,14 @@ leaders:
     coefficient: 1.0
     total_margin: 50000
     enabled: true
+    # Symbols skipped for this leader (case-insensitive), e.g. [BTCUSDT]
+    symbol_blacklist: []
+    # 交易员后入（限价单）：开启后，收到该 leader 的开仓(OPEN)信号时不立即市价开仓，
+    # 而是挂一张价格更优的限价单——买入价 = leader 开仓价 × (1 - offset%)，
+    # 卖出价 = leader 开仓价 × (1 + offset%)。仅开仓生效，加/减/平仓仍即时执行；
+    # 限价单未成交期间，该 leader 后续的加/减/平仓信号会被跳过（我们无仓位，不做操作）。
+    late_entry_enabled: false
+    late_entry_offset_pct: 0.2
 
 execution:
   exchange: "bitget"
@@ -40,6 +48,9 @@ execution:
 risk:
   blacklist: []
   conflict_resolution: "skip"
+  # Optional: use a fixed USDT balance for OPEN/INCREASE sizing.
+  # Leave null to use the live Bitget account equity.
+  fixed_balance_usdt: null
 
 notifications:
   telegram:

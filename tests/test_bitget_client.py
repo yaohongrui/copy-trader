@@ -89,7 +89,10 @@ class BitgetOrderPayloadTests(unittest.IsolatedAsyncioTestCase):
         position = (await account.get_positions())[0]
         self.assertEqual(position["entry_price"], "108.97")
         self.assertEqual(position["unrealized_pnl"], "2.82")
-        self.assertEqual(position["roi_pct"], str(Decimal("2.82") / Decimal("5.96") * 100))
+        self.assertEqual(
+            position["roi_pct"],
+            str(Decimal("2.82") / (Decimal("2.74") * Decimal("108.97") / 100) * 100),
+        )
 
     async def test_account_skips_zero_aliases_in_uta_position(self):
         account = BitgetAccount("key", "secret", "passphrase")
@@ -108,7 +111,7 @@ class BitgetOrderPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(position["margin"], "5.96")
         self.assertEqual(
             position["roi_pct"],
-            str(Decimal("-0.9595") / Decimal("5.96") * 100),
+            str(Decimal("-0.9595") / (Decimal("2.74") * Decimal("108.97") / 100) * 100),
         )
 
     async def test_account_uses_official_uta_position_field_names(self):
@@ -125,7 +128,23 @@ class BitgetOrderPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(position["mark_price"], "63096.6")
         self.assertEqual(position["unrealized_pnl"], "-0.00782")
         self.assertEqual(position["margin"], "2.9026")
-        self.assertEqual(position["roi_pct"], "-0.269400")
+        self.assertEqual(
+            position["roi_pct"],
+            str(Decimal("-0.00782") / (Decimal("0.0023") * Decimal("63100") / 100) * 100),
+        )
+
+    async def test_roi_is_always_calculated_on_a_100x_basis(self):
+        account = BitgetAccount("key", "secret", "passphrase")
+        account.client.get_positions = AsyncMock(return_value=[{
+            "symbol": "BTCUSDT", "total": "2", "holdSide": "long",
+            "avgPrice": "100", "markPrice": "101", "unrealizedPnl": "2",
+            "marginSize": "50", "profitRate": "0.0001",
+        }])
+
+        position = (await account.get_positions())[0]
+
+        # 100x margin is 2 * 100 / 100 = 2 USDT, so ROI is 100%.
+        self.assertEqual(position["roi_pct"], "100")
 
 
 if __name__ == "__main__":

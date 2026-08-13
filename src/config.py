@@ -38,6 +38,18 @@ class LeaderConfig:
     coefficient: float = 1.0
     total_margin: float = 50000.0
     enabled: bool = True
+    late_entry_enabled: bool = False
+    late_entry_offset_pct: float = 0.2
+    # Symbols this leader is not allowed to trade (case-insensitive).
+    symbol_blacklist: list[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        self.symbol_blacklist = [str(symbol).strip().upper() for symbol in self.symbol_blacklist]
+        if self.late_entry_enabled and self.late_entry_offset_pct < 0:
+            raise ValueError(
+                f"late_entry_offset_pct must be >= 0 when late_entry_enabled=true "
+                f"(leader {self.name})"
+            )
 
 
 @dataclass
@@ -94,6 +106,10 @@ class ExecutionConfig:
 class RiskConfig:
     blacklist: list[str] = field(default_factory=list)
     conflict_resolution: str = "skip"
+    # When set, use this synthetic USDT balance for OPEN/INCREASE sizing
+    # instead of querying the live Bitget account equity.  DECREASE sizing
+    # remains based on the current position quantity.
+    fixed_balance_usdt: float | None = None
 
 
 @dataclass

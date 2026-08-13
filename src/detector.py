@@ -29,6 +29,7 @@ def detect_changes(
                 leverage=pos.leverage,
                 leader_notional=pos.notional_value,
                 reason=f"Leader opened {pos.symbol} {pos.position_side}",
+                leader_entry_price=pos.entry_price,
                 leader_new_quantity=abs(pos.position_amount),
             ))
 
@@ -99,6 +100,7 @@ def detect_changes(
                     leverage=new_pos.leverage,
                     leader_notional=new_pos.notional_value,
                     reason=f"Leader opened {new_pos.symbol} (direction reversal)",
+                    leader_entry_price=new_pos.entry_price,
                     leader_new_quantity=new_amt,
                 ))
 

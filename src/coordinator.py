@@ -43,6 +43,7 @@ class Coordinator:
         self._notifier = Notifier(config.notifications_telegram)
         self._health_database = HealthDatabase(config.health_database.path)
         self._state = State()
+        self._pending_late_orders = self._state.pending_late_orders
         self._health = HealthReporter(
             config, self._poller, self._account, self._state,
             self._notifier, self._format_account_position,
@@ -69,6 +70,7 @@ class Coordinator:
         await self._account.start()
         await self._notifier.start()
         self._state.load()
+        self._pending_late_orders = self._state.pending_late_orders
 
         self._running = True
 
@@ -195,6 +197,18 @@ class Coordinator:
 
     def _is_leader_enabled(self, name: str) -> bool:
         return any(l.name == name and l.enabled for l in self._config.leaders)
+
+    def _is_symbol_blacklisted(self, leader_name: str, symbol: str) -> bool:
+        """Return whether this leader is configured to skip the symbol."""
+        leader_cfg = next(
+            (leader for leader in self._config.leaders if leader.name == leader_name),
+            None,
+        )
+        if leader_cfg is None:
+            return False
+        # 大小写不敏感，并容忍配置项/信号前后空格（config.py 的 __post_init__ 只做大写归一化）
+        normalized = {item.strip().upper() for item in leader_cfg.symbol_blacklist}
+        return symbol.strip().upper() in normalized
 
     async def _poll_loop(self, leader_cfg: LeaderConfig):
         """Continuously poll a single leader's positions."""
@@ -402,6 +416,55 @@ class Coordinator:
 
     async def _handle_signal(self, signal: TradeSignal):
         """Process a single trade signal: check conflicts, size, execute."""
+        # 黑名单优先：命中直接跳过，不查 pending 订单、不做任何网络调用/副作用
+        if self._is_symbol_blacklisted(signal.leader_name, signal.symbol):
+            logger.info(
+                "Skipping blacklisted symbol %s for leader %s",
+                signal.symbol,
+                signal.leader_name,
+            )
+            return
+
+        pending_key = (signal.leader_name, signal.symbol, signal.position_side)
+        pending_id = self._pending_late_orders.get(pending_key)
+        if pending_id:
+            try:
+                details = await self._account.client.get_order_info(order_id=pending_id)
+                status = str(details.get("orderStatus", "")).lower()
+                if status == "filled":
+                    self._pending_late_orders.pop(pending_key, None)
+                elif status in {"cancelled", "canceled", "rejected", "expired"}:
+                    self._pending_late_orders.pop(pending_key, None)
+                else:
+                    if signal.signal_type != SignalType.OPEN:
+                        # The leader changed an unfilled position.  Retaining
+                        # the original entry order could later create a stale,
+                        # oversized position after the leader has reduced or
+                        # closed.  Cancel it, then intentionally skip this
+                        # signal because we have no mirrored position yet.
+                        try:
+                            await self._account.client.cancel_order(
+                                symbol=signal.symbol, order_id=pending_id,
+                            )
+                            self._pending_late_orders.pop(pending_key, None)
+                            logger.info(
+                                "Cancelled pending late-entry order after %s: %s",
+                                signal.signal_type.value, pending_key,
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "Failed to cancel pending late-entry order %s: %s",
+                                pending_key, exc,
+                            )
+                        return
+                    # 未完全成交（含 partially_filled）时继续跟踪：剩余限价量仍挂在
+                    # 交易所，若此时清除记录，后续加仓可能与该挂单叠加造成超量。
+                    logger.info("Skipping signal while late-entry order is pending: %s", pending_key)
+                    return
+            except Exception:
+                logger.info("Skipping signal while late-entry order status is unavailable: %s", pending_key)
+                return
+
         if signal.symbol in self._unavailable_symbols:
             logger.info("Skipping unavailable Bitget symbol: %s", signal.symbol)
             return
@@ -530,7 +593,11 @@ class Coordinator:
         # Calculate quantity for opens/increases and proportional decreases.
         if signal.signal_type != SignalType.CLOSE:
             try:
-                my_margin = await self._account.get_total_margin()
+                fixed_balance = self._config.risk.fixed_balance_usdt
+                my_margin = (
+                    Decimal(str(fixed_balance)) if fixed_balance is not None
+                    else await self._account.get_total_margin()
+                )
                 quantity = self._sizer.calculate(
                     signal=signal,
                     leader_cfg=leader_cfg,
@@ -612,8 +679,26 @@ class Coordinator:
             # CLOSE 是全平强需求，不参与冷却
             cooldown_key = None
 
+        limit_price = None
+        if signal.signal_type == SignalType.OPEN and leader_cfg.late_entry_enabled:
+            entry = signal.leader_entry_price or mark_price
+            offset = Decimal(str(leader_cfg.late_entry_offset_pct)) / Decimal(100)
+            if entry > 0 and offset >= 0:
+                limit_price = entry * (Decimal(1) - offset if signal.side == "buy" else Decimal(1) + offset)
+                logger.info("Late entry: %s %s limit=%s (leader=%s)", signal.leader_name, signal.symbol, limit_price, entry)
+
         # Execute
-        result = await self._executor.execute(signal, quantity)
+        result = await self._executor.execute(signal, quantity, limit_price=limit_price)
+
+        if result.pending:
+            if result.order_id:
+                self._pending_late_orders[pending_key] = result.order_id
+            await self._notifier.notify_skipped(
+                leader=signal.leader_name, symbol=signal.symbol,
+                signal_type=signal.signal_type.value, side=signal.side,
+                reason=f"late-entry limit order pending at {result.avg_price}",
+            )
+            return
 
         if cooldown_key is not None:
             if result.success:

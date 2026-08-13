@@ -22,6 +22,7 @@ class State:
     def __init__(self):
         self.leader_states: dict[str, LeaderState] = {}
         self.mirror_positions: dict[tuple[str, str, str], MirrorPosition] = {}
+        self.pending_late_orders: dict[tuple[str, str, str], str] = {}
         self._last_save: float = 0
 
     def get_mirror(self, leader_name: str, symbol: str, side: str) -> MirrorPosition | None:
@@ -48,6 +49,10 @@ class State:
                     "opened_at": v.opened_at,
                 }
                 for k, v in self.mirror_positions.items()
+            },
+            "pending_late_orders": {
+                "|".join(key): order_id
+                for key, order_id in self.pending_late_orders.items()
             },
             "saved_at": time(),
         }
@@ -80,6 +85,11 @@ class State:
                     pos.leader_name, pos.symbol, pos.position_side,
                     pos.our_quantity, pos.leader_quantity_at_sync
                 )
+            pending_data = data.get("pending_late_orders", {})
+            for key_str, order_id in pending_data.items():
+                key = tuple(key_str.split("|", 2))
+                if len(key) == 3 and order_id:
+                    self.pending_late_orders[key] = str(order_id)
             logger.info("✅ Loaded %d mirror positions from state", len(self.mirror_positions))
         except Exception as e:
             logger.error("Failed to load state: %s, starting fresh", e, exc_info=True)

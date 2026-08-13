@@ -39,6 +39,9 @@ python3 -m src.main run
 - **自动跟单** - 检测到变化后自动计算并执行订单
 - **比例控制** - 通过 `coefficient` 调节仓位大小
 - **风险管理** - 黑名单、冲突检测
+- **固定余额** - 可用固定 USDT 余额代替实时账户余额计算仓位（`risk.fixed_balance_usdt`）
+- **交易员级币种黑名单** - 按交易员配置禁售币种，命中信号直接忽略（`leaders[].symbol_blacklist`）
+- **后入限价单** - 可按交易员开启开仓延迟：不下市价单，改挂价格更优的限价单（`leaders[].late_entry_*`）
 - **热重载** - HTTP Cookie 配置可无需重启更新；切换认证来源需重启
 - **Telegram 通知** - 实时推送交易和异常信息
 - **Bitget UTA 官方接口** - USDT 永续、单向持仓、全仓模式；不依赖 ccxt
@@ -84,17 +87,20 @@ leaders:
     coefficient: 1.0          # 跟单系数：1=同比例，<1=保守，>1=激进
     total_margin: 50000       # 带单员总保证金
     enabled: true
+    symbol_blacklist: []      # 该交易员禁售币种（大小写不敏感），如 [BTCUSDT]
+    late_entry_enabled: false # 后入：开仓改挂限价单（仅开仓，加减平仓仍即时执行）
+    late_entry_offset_pct: 0.2 # 限价偏移百分比：买=开仓价×(1-偏移)，卖=开仓价×(1+偏移)
 
 execution:
   exchange: "bitget"          # 仅支持 Bitget 统一账户（UTA）
   api_key: "YOUR_BITGET_API_KEY"
   api_secret: "YOUR_BITGET_API_SECRET"
   api_passphrase: "YOUR_BITGET_API_PASSPHRASE"
-  sandbox: false                # Bitget UTA 不使用此字段
 
 risk:
   blacklist: []               # 黑名单币种
   conflict_resolution: "skip" # 冲突处理策略：skip = 跳过冲突订单
+  fixed_balance_usdt: null    # 固定余额（USDT），null=使用实时账户余额
 ```
 
 完整配置说明见 [USER_GUIDE.md](USER_GUIDE.md)。配置模板见 [config/config.example.yaml](config/config.example.yaml)。
